@@ -6,7 +6,9 @@ socket.bind("tcp://*:5555")
 
 while True:
     # Receive message
+    print("hello")
     message = socket.recv()
+    print(message)
     
     # Process message (simulate packet handling, sequence tracking, etc.)
     
