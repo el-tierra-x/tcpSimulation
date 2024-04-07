@@ -1,152 +1,150 @@
 import zmq
 import time
 import random
-from collections import deque
-
+import heapq  # Import heapq for heap operations
+from collections import deque, defaultdict
 import threading
+import constants
 
-import constants 
+from constants import PACKET_STATUS
 
+# Constants and global variables setup
 
-
-''' 
-    Global variables from tracking connection requests , packet loss and packet loss rate 
-'''
 connected = False
-seq_num = 0
 socket = None
-packet_loss = False
+context = zmq.Context()
+window_size = 4
+packet_loss_rate = 0.2
+time_heap = []  # Heap to manage packet timeouts
+packet_status = defaultdict(lambda: 'not_sent')
+send_lock = threading.Lock()
 
- 
 def connect(ip_address:str, port:str):
-    global connected, socket
-    
+    global connected, socket, context
     address = f'tcp://{ip_address}:{port}'
-    
     if(connected):
         print("Already connected")
         return True
-
-    context = zmq.Context()
-    socket = context.socket(zmq.REQ)  # REQ socket for requests
+    socket = context.socket(zmq.REQ)
     socket.connect(address)
-    
     if socket:
         connected = True
         print("Connection established")
         return True
-    
     else:
         print("Connection failed")
         return False
-    
-    
-    
+
 def close():
-    global connected, socket
-    
+    global connected, socket, context
     if not connected:
         print("Not connected")
         return
-
-    socket.send(b"close")
+    socket.send_string("close")
+    message = socket.recv_string()  # Expecting a confirmation message
     socket.close()
+    context.term()  # Terminate the ZMQ context
     connected = False
     socket = None
-    
     print("Connection closed")
-    
-
-
 
 def initiate_connection():
     global socket
-    
     ip_address = input("Enter the server IP address: ")
     port = input("Enter the server port: ")
-    
     if not connect(ip_address, port):
         return False
-    
-    # Send connection request
-    socket.send(bytes(constants.INITIATE_CONNECTION_REQUEST, 'utf-8'))
-    
-    # Wait for acknowledgment
-    message = socket.recv()
-    recieved_msg = message.decode()
-    
-    if socket and recieved_msg == constants.CONNECTION_SUCCESS:
-        print("Connection established")
-        return socket
-    
+    socket.send_string(constants.INITIATE_CONNECTION_REQUEST)
+    message = socket.recv_string()
+    if socket and message == constants.CONNECTION_SUCCESS:
+        print("Connection successfully established")
+        return True
     else:
         print("Connection failed")
         return False
-    
 
-def handle_acknowledgment(socket: zmq.Socket, seq_num: int, packet_num: int, queue: list[tuple[int, int]]):
-    message = socket.recv()
-    decoded_message = message.decode()
-    
-    ack_seq_num = int(decoded_message.split(":")[1])
-    
-    ack_msg = decoded_message.split(":")[0]
-    if ack_msg == constants.ACKNOWLEDGMENT:
-        seq_num = ack_seq_num + 1
+def send_packet(seq_num):
+    global packet_status, time_heap
+    with send_lock:
+        print(f"Packet {seq_num} sent")
+        socket.send_string(f"DATA:{seq_num}")
+        packet_status[seq_num] = PACKET_STATUS.SENT
+        # Calculate and push the timeout for this packet into the heap
+        timeout = time.time() + constants.TIMEOUT
+        heapq.heappush(time_heap, (timeout, seq_num))
+
+def check_timeouts_and_retransmit():
+    """Check for timeouts and retransmit packets as necessary."""
+    global packet_status, time_heap
+    while connected:
+        current_time = time.time()
+        while time_heap and time_heap[0][0] < current_time:
+            _, seq_num = heapq.heappop(time_heap)  # Pop the packet with the earliest timeout
+            if packet_status[seq_num] == PACKET_STATUS.SENT:  # Check if it hasn't been acknowledged
+                print(f"Timeout for packet {seq_num}, retransmitting...")
+                send_packet(seq_num)  # Retransmit packet
+        time.sleep(1)  # Check timeouts periodically
         
-    return seq_num
+def receive_acknowledgments():
+    """Non-blocking receive for acknowledgments from the server."""
+    global packet_status, connected
+    poller = zmq.Poller()
+    poller.register(socket, zmq.POLLIN)
+    
+    while connected:
+        socks = dict(poller.poll(timeout=1000))  # Adjust timeout as needed
+        if socket in socks and socks[socket] == zmq.POLLIN:
+            message = socket.recv_string(flags=zmq.NOBLOCK)
+            ack_seq_nums = message.split()  # Assuming the server sends acks as a space-separated list of seq nums
+            with send_lock:
+                for seq_num in ack_seq_nums:
+                    if seq_num.isdigit() and int(seq_num) in packet_status:
+                        packet_status[int(seq_num)] = PACKET_STATUS.ACKED
+                        print(f"Packet {seq_num} acknowledged")
+        time.sleep(0.1)  # Brief pause to prevent tight loop
 
-def send_by_sliding_window(socket: zmq.Socket):    
-    # Implement sliding window and packet loss logic here
+def send_packet(seq_num):
+    """Enhanced send_packet to not block if waiting for acks."""
+    global packet_status, time_heap
+    with send_lock:
+        if packet_status[seq_num] != 'acknowledged':  # Only send if not already acknowledged
+            print(f"Packet {seq_num} sent")
+            socket.send_string(f"DATA {seq_num}", zmq.NOBLOCK)  # Use NOBLOCK if necessary
+            packet_status[seq_num] = 'sent'
+            # Record the timeout for this packet
+            timeout = time.time() + constants.TIMEOUT
+            heapq.heappush(time_heap, (timeout, seq_num))
+
+
+def sliding_window_protocol():
+    global packet_status
     seq_num = 0
-    packet_num = 0
-    val =(0,1)
-    queue:list[tuple[int, int]] = []
-    for i in range(constants.WINDOW_SIZE):
-        queue.append((seq_num, packet_num))
-      
-    # send initial packets  
-    for (seq_num, packet_num) in queue:
-        socket.send(f"Data: {seq_num}:{packet_num}".encode())
+    total_packets = constants.TOTAL_PACKETS
     
-    
-    while True:
-        message = socket.recv()
-        decoded_message = message.decode()
-        
-        ack_seq_num = int(decoded_message.split(":")[1])
-        
-        ack_msg = decoded_message.split(":")[0]
-        if ack_msg == constants.ACKNOWLEDGMENT:
-            seq_num = handle_acknowledgment(socket, seq_num, packet_num, queue)
-        
-        
-        
-        if decoded_message == constants.ACKNOWLEDGMENT:
-            print("Received: ACK")
+     # Start thread for receiving acknowledgments
+    ack_thread = threading.Thread(target=receive_acknowledgments)
+    ack_thread.start()
 
-        print(f"Received: {message.decode()}")
-        seq_num += 1
-        packet_num += 1
-        if packet_num == constants.TOTAL_PACKETS:
-            break
-        queue.pop(0)
-        queue.append((seq_num, packet_num))
-        socket.send(f"Data: {seq_num}:{packet_num}".encode())
-    
-    return seq_num + 1
+    # Start thread for checking timeouts and potential retransmits
+    timeout_thread = threading.Thread(target=check_timeouts_and_retransmit)
+    timeout_thread.start()
 
+    while any(status != PACKET_STATUS.ACKED for status in packet_status.values()) or seq_num < total_packets:
+        with send_lock:
+            if seq_num < total_packets:
+                seq_num += 1
+                send_packet(seq_num)
+
+        time.sleep(2)  # Main loop delay to prevent too much CPU usage
+
+    # Ensure threads are joined back before exiting
+    ack_thread.join()
+    timeout_thread.join()
 
 def __main__():
-    global socket
-    
-    initiate_connection()
-    
-    if not socket:
-        return
-    
+    if initiate_connection():
+        sliding_window_protocol()
     close()
-    # Implement sliding window and packet loss logic here
-    
 
-__main__()
+if __name__ == '__main__':
+    __main__()
