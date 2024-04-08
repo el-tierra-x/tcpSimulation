@@ -98,25 +98,26 @@ def receive_acknowledgments():
     
     while connected:
         try:
-            message = socket.recv_string(zmq.NOBLOCK)
-            ack_seq_num = int(message.split(':')[1])
-            print(f"Received ack for packet {ack_seq_num}")
-            
-            with send_lock:
-                if packet_status[ack_seq_num] == PACKET_STATUS.SENT:
-                    packet_status[ack_seq_num] = PACKET_STATUS.ACKED
-                    total_recieved_segments += 1
-                    
-                    if ack_seq_num > last_ack:
-                        last_ack = ack_seq_num
+            while True:
+                message = socket.recv_string(zmq.NOBLOCK)
+                ack_seq_num = int(message.split(':')[1])
+                print(f"Received ack for packet {ack_seq_num}")
+                
+                with send_lock:
+                    if packet_status[ack_seq_num] == PACKET_STATUS.SENT:
+                        packet_status[ack_seq_num] = PACKET_STATUS.ACKED
+                        total_recieved_segments += 1
                         
-                    while send_base in packet_status and packet_status[send_base] == PACKET_STATUS.ACKED:
-                        send_base += 1
-                        window_size = min(window_size + 1, constants.MAX_WINDOW_SIZE)  # Adjust growth rate as needed
-                        
+                        if ack_seq_num > last_ack:
+                            last_ack = ack_seq_num
+                            
+                        while send_base in packet_status and packet_status[send_base] == PACKET_STATUS.ACKED:
+                            send_base += 1
+                            window_size = min(window_size + 1, constants.MAX_WINDOW_SIZE)  # Adjust growth rate as needed
+                            
         except zmq.Again:
             pass  # No message received
-        time.sleep(0.1)  # Reduce CPU usage
+        time.sleep(3)  # Reduce CPU usage
 
         
 # def receive_acknowledgments():
