@@ -83,15 +83,13 @@ def check_timeouts_and_retransmit():
     """Check for timeouts and retransmit packets as necessary."""
     global packet_status, time_heap, window_size, connected, send_base
     while connected:
-        
-        with send_lock:
-            current_time = time.time()
-            while time_heap and time_heap[0][0] < current_time:
-                _, seq_num = heapq.heappop(time_heap)  # Pop the packet with the earliest timeout
-                if packet_status[seq_num] == PACKET_STATUS.SENT:  # Check if it hasn't been acknowledged
-                    print(f"Timeout for packet {seq_num}, retransmitting...")
-                    window_size = max(window_size - 1, 1)  # Reduce window size on timeout
-                    send_packet(seq_num)  # Retransmit packet
+        current_time = time.time()
+        while time_heap and time_heap[0][0] < current_time:
+            _, seq_num = heapq.heappop(time_heap)  # Pop the packet with the earliest timeout
+            if packet_status[seq_num] == PACKET_STATUS.SENT:  # Check if it hasn't been acknowledged
+                print(f"Timeout for packet {seq_num}, retransmitting...")
+                window_size = max(window_size - 1, 1)  # Reduce window size on timeout
+                send_packet(seq_num)  # Retransmit packet
         time.sleep(5)  # Check timeouts periodically
     return
 
@@ -148,14 +146,10 @@ def receive_acknowledgments():
 def send_packet(seq_num):
     """Enhanced send_packet to not block if waiting for acks."""
     global packet_status, time_heap, send_lock, send_base, last_ack, socket, window_size
-    
     with send_lock:
         if packet_status[seq_num] != PACKET_STATUS.ACKED and seq_num <= send_base + window_size:  # Only send if not already acknowledged
-            
             if simulate_packet_loss():
                 print(f"Simulating packet loss for sequence number: {seq_num}")
-                # send_base = min(next_seq_num - 1, last_ack)
-                
             else:
                 print(f"Packet {seq_num} sent")
                 socket.send_string(f"DATA:{seq_num}", zmq.NOBLOCK)  # Use NOBLOCK if necessary
