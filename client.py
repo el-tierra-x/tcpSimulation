@@ -14,6 +14,7 @@ connected = False
 socket = None
 context = zmq.Context()
 window_size = 1
+last_max_window_size = None
 send_base = 0
 next_seq_num = 0
 total_recieved_segments = 0
@@ -21,6 +22,7 @@ last_ack = 0
 time_heap = []  # Heap to manage packet timeouts
 packet_status = defaultdict(lambda: PACKET_STATUS.NOT_SENT)
 send_lock = threading.Lock()
+is_packet_dropped = False
 
 
 
@@ -81,7 +83,9 @@ def initiate_connection():
 
 def check_timeouts_and_retransmit():
     """Check for timeouts and retransmit packets as necessary."""
-    global packet_status, time_heap, window_size, connected, send_base
+    global packet_status, time_heap, window_size, connected, send_base, is_packet_dropped
+    
+    is_dropped = False
     while connected:
         current_time = time.time()
         while time_heap and time_heap[0][0] < current_time:
@@ -90,8 +94,23 @@ def check_timeouts_and_retransmit():
                 print(f"Timeout for packet {seq_num}, retransmitting...")
                 window_size = max(window_size - 1, 1)  # Reduce window size on timeout
                 send_packet(seq_num)  # Retransmit packet
+                is_packet_dropped = True
+                update_window_size(False)
+        if is_dropped:
+            is_dropped = False
         time.sleep(5)  # Check timeouts periodically
     return
+
+def update_window_size(increase:bool):
+    global window_size, last_max_window_size, is_packet_dropped
+    
+    if increase:
+        if is_packet_dropped:
+            window_size += 1
+        else:
+            window_size = min(window_size * 2, constants.MAX_WINDOW_SIZE)
+    else:
+        window_size = max(window_size // 2, 1)
 
 def receive_acknowledgments():
     global packet_status, connected, last_ack, send_base, total_recieved_segments, window_size
@@ -113,11 +132,11 @@ def receive_acknowledgments():
                             
                         while send_base in packet_status and packet_status[send_base] == PACKET_STATUS.ACKED:
                             send_base += 1
-                            window_size = min(window_size + 1, constants.MAX_WINDOW_SIZE)  # Adjust growth rate as needed
+                            update_window_size(True)
                             
         except zmq.Again:
             pass  # No message received
-        time.sleep(3)  # Reduce CPU usage
+        time.sleep(0.2)  # Reduce CPU usage
 
         
 # def receive_acknowledgments():
