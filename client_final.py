@@ -84,7 +84,7 @@ def close():
         print("Not connected")
         return
     socket.send_string("close")
-    message = socket.recv_string()  # Expecting a confirmation message
+    # message = socket.recv_string()  # Expecting a confirmation message
     socket.close()
     context.term()  # Terminate the ZMQ context
     connected = False
@@ -110,8 +110,13 @@ def check_timeouts_and_retransmit():
     """Check for timeouts and retransmit packets as necessary."""
     global packet_status, time_heap, window_size, connected, send_base, is_packet_dropped
     packet_dropped = False
+  
     while connected:
         print("Checking timeouts...")
+        print(total_recieved_segments)
+        if total_recieved_segments == constants.TOTAL_PACKETS-1:
+            break
+          
         current_time = time.time()
         while time_heap and time_heap[0][0] < current_time:
             _, seq_num = heapq.heappop(time_heap)  # Pop the packet with the earliest timeout
@@ -140,16 +145,20 @@ def update_window_size(increase:bool):
 
 def receive_acknowledgments():
     global packet_status, connected, last_ack, send_base, total_recieved_segments, window_size, socket
-
+    
     is_recieved = False
     while connected:
         # print("Checking acknowledgments...")
         try:
           while True:
+            if total_recieved_segments == constants.TOTAL_PACKETS-1:
+              return
+          
             message = socket.recv_string(flags=zmq.NOBLOCK)
             
-            if message == "close":
-              close()
+            if message == constants.CLOSE_CONNECTION:
+              return
+            
             ack_seq_num = int(message.split(':')[1])
             print(f"Received ack for packet {ack_seq_num}")
 
@@ -234,11 +243,13 @@ def sliding_window_protocol():
         # print(f"Total received segments: {total_recieved_segments} , window size: {window_size} , send base: {send_base}, next seq num: {next_seq_num}")
 
     # Ensure threads are joined back before exiting
-    close()
     ack_thread.join()
     timeout_thread.join()
+    
+    close()
+    
     report_window_size_thread.join()
-
+    
 def __main__():
     global send_thread
     if initiate_connection():

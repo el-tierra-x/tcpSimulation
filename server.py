@@ -36,12 +36,12 @@ def handle_client_requests():
             message = data.decode('utf-8')
             print(f"Received request: {message}")
             
-            if message == "close":
-                socket.send_multipart([client_id, "Connection closed".encode()])
+            if message == constants.CLOSE_CONNECTION:
+                socket.send_multipart([client_id, constants.CLOSE_CONNECTION.encode()])
                 connected = False
                 print("Connection closed")
             
-            if constants.INITIATE_CONNECTION_REQUEST in message:
+            elif constants.INITIATE_CONNECTION_REQUEST in message:
                 # Handle initial connection request
                 print("Handling initial connection...")
                 socket.send_multipart([client_id, constants.CONNECTION_SUCCESS.encode()])  # Send a connection success message
