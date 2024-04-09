@@ -13,7 +13,7 @@ from constants import PACKET_STATUS
 connected = False
 socket = None
 context = zmq.Context()
-window_size = 100
+window_size = 1
 last_max_window_size = None
 send_base = 0
 send_buffer = []
@@ -145,7 +145,7 @@ def receive_acknowledgments():
               recieve_ack = False
               update_window_size(True)
             pass  # No message received
-        time.sleep(0.1)  # Reduce CPU usage
+        # time.sleep(0.1)  # Reduce CPU usage
 
 def send_packet(seq_num, is_retransmission=False):
     global send_buffer, send_lock
@@ -176,7 +176,7 @@ def send_thread_function():
                     packet_status[seq_num] = PACKET_STATUS.SENT
                 else:
                     break  # Exit if the top packet is outside the window
-        time.sleep(0.1)
+        # time.sleep(0.1)
 
 def sliding_window_protocol():
     global packet_status, next_seq_num, window_size, last_ack, total_recieved_segments, send_base
