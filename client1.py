@@ -13,7 +13,7 @@ from constants import PACKET_STATUS
 connected = False
 socket = None
 context = zmq.Context()
-window_size = 1
+window_size = 100
 last_max_window_size = None
 send_base = 0
 send_buffer = []
@@ -95,7 +95,6 @@ def check_timeouts_and_retransmit():
             _, seq_num = heapq.heappop(time_heap)  # Pop the packet with the earliest timeout
             if packet_status[seq_num] == PACKET_STATUS.SENT:  # Check if it hasn't been acknowledged
                 print(f"Timeout for packet {seq_num}, retransmitting...")
-                window_size = max(window_size - 1, 1)  # Reduce window size on timeout
                 send_packet(seq_num)  # Retransmit packet
                 is_packet_dropped = True
                 is_dropped = True
@@ -120,6 +119,8 @@ def update_window_size(increase:bool):
 def receive_acknowledgments():
     global packet_status, connected, last_ack, send_base, total_recieved_segments, window_size
     
+    recieve_ack = False
+    
     while connected:
         try:
             while True:
@@ -134,12 +135,15 @@ def receive_acknowledgments():
                         
                         if ack_seq_num > last_ack:
                             last_ack = ack_seq_num
+                        
+                        recieve_ack = True
                             
                         while send_base in packet_status and packet_status[send_base] == PACKET_STATUS.ACKED:
                             send_base += 1
-                        update_window_size(True)
-
         except zmq.Again:
+            if recieve_ack:
+              recieve_ack = False
+              update_window_size(True)
             pass  # No message received
         time.sleep(0.1)  # Reduce CPU usage
 
@@ -151,20 +155,28 @@ def send_packet(seq_num, is_retransmission=False):
         
 
 def send_thread_function():
-    global connected, socket
+    global connected, socket, send_base, window_size, packet_status
     while connected:
-        if send_buffer:
-            with send_lock:
-                _, seq_num = heapq.heappop(send_buffer)
-                if packet_status[seq_num] != PACKET_STATUS.ACKED:  # Check to avoid sending acked packets
+        with send_lock:
+            current_time = time.time()
+            while send_buffer and packet_status[send_buffer[0][1]] != PACKET_STATUS.ACKED:
+                _, seq_num = send_buffer[0]  # Peek at the top packet without popping it
+                
+                # Check if the packet is within the window and ready to send
+                if send_base <= seq_num < send_base + window_size:
+                    heapq.heappop(send_buffer)  # Now pop the packet since it's being processed
                     if not simulate_packet_loss():
                         print(f"Sending packet {seq_num}")
                         socket.send_string(f"DATA:{seq_num}")
-                    packet_status[seq_num] = PACKET_STATUS.SENT
-                    timeout = time.time() + constants.TIMEOUT
+                        # Update the timeout for this packet
+                    else:
+                      print(f"Simulating packet loss for packet {seq_num}")
+                    timeout = current_time + constants.TIMEOUT
                     heapq.heappush(time_heap, (timeout, seq_num))
-            time.sleep(0.1)  # Prevent spamming the network too fast; adjust based on your requirements
-
+                    packet_status[seq_num] = PACKET_STATUS.SENT
+                else:
+                    break  # Exit if the top packet is outside the window
+        time.sleep(0.1)
 
 def sliding_window_protocol():
     global packet_status, next_seq_num, window_size, last_ack, total_recieved_segments, send_base
@@ -181,7 +193,6 @@ def sliding_window_protocol():
 
     while total_recieved_segments <= constants.TOTAL_PACKETS:
         while next_seq_num < (send_base + window_size) and next_seq_num < total_packets:
-            print(next_seq_num , window_size, send_base)
             send_packet(next_seq_num)
             next_seq_num += 1
 
