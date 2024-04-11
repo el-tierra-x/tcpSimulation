@@ -76,6 +76,8 @@ def __main__():
     socket.bind(f"tcp://*:{constants.PORT_NUMBER}")
     
     print("Server waiting for connection")
+    print("good put :",packets_recieved /total_packets)
+    print("")
     if not connected:
         while not accept_connection():
             # This loop waits until a successful connection is made

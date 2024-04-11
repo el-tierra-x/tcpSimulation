@@ -33,6 +33,7 @@ num_retransmissions = Counter()
 
 window_size_df = pd.DataFrame(columns=['Time', 'WindowSize'])
 
+#simulating packet loss
 def simulate_packet_loss():
     """Simulates a 1% chance of packet loss."""
     return random.random() < constants.PACKET_LOSS_RATE
@@ -41,7 +42,8 @@ def increment_sequence_number(seq_num):
     return (seq_num + 1)
       
     # return (seq_num + 1) % constants.MAX_WINDOW_SIZE  # 2^16
-  
+
+#reporting window size 
 def report_window_size():
 #   while connected:
     global window_size, window_size_df
@@ -65,7 +67,7 @@ def plot_window_size():
     plt.grid(True)
     plt.show()  
         
-
+#initial connection
 def connect(ip_address: str, port: str, retries=5, retry_delay=5):
     global connected, socket, context
     address = f"tcp://{ip_address}:{port}"
@@ -98,6 +100,7 @@ def connect(ip_address: str, port: str, retries=5, retry_delay=5):
     print("Connection failed after retries")
     return False
 
+#close connection on complete
 def close():
     global connected, socket, context
     if not connected:
@@ -126,8 +129,8 @@ def initiate_connection():
         print("Connection failed")
         return False
 
+"""Check for timeouts and retransmit packets as necessary."""
 def check_timeouts_and_retransmit():
-    """Check for timeouts and retransmit packets as necessary."""
     global packet_status, time_heap, window_size, connected, send_base, is_packet_dropped, num_retransmissions
     packet_dropped = False
   
@@ -157,6 +160,7 @@ def check_timeouts_and_retransmit():
         
         time.sleep(constants.TIMEOUT_CHECK_INTERVAL)  # Check timeouts periodically
 
+#update window size based on packet drop
 def update_window_size(increase:bool, is_slow_restart=False):
     global window_size, last_max_window_size, is_packet_dropped
     
@@ -286,12 +290,15 @@ def sliding_window_protocol():
 
     while total_recieved_segments < total_packets -1:
         print(total_recieved_segments, window_size, send_base , next_seq_num, len(send_buffer))
-        
         while next_seq_num <= (send_base + window_size) and  next_seq_num <= constants.TOTAL_PACKETS:
             
             send_packet(next_seq_num)
             next_seq_num = increment_sequence_number(next_seq_num)
-            
+            if send_base == 0 and total_recieved_segments > 500000:
+                ack_thread.join()
+                timeout_thread.join()
+                
+                exit()
         time.sleep(0.1)  # Reduce CPU usage
         # print(f"Total received segments: {total_recieved_segments} , window size: {window_size} , send base: {send_base}, next seq num: {next_seq_num}")
 
